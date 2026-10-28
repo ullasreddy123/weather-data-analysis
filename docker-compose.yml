@@ -1,0 +1,9 @@
+services:
+  weather-web:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      # Lets you drop in new Hadoop output / data without rebuilding
+      - ./data:/app/data
+    restart: unless-stopped

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weather Data Analysis</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root { --bg:#f4f6fa; --card:#fff; --text:#1c2433; --muted:#667085; --line:#e4e7ec; --accent:#2563eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f141c; --card:#182130; --text:#e8edf5; --muted:#9aa7bb; --line:#27324a; --accent:#6aa3ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:20px 24px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; }
+  h1 { font-size:1.4rem; margin:0; }
+  .sub { color:var(--muted); font-size:.85rem; margin-top:2px; }
+  .controls { display:flex; gap:8px; align-items:center; }
+  select, button { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:none; }
+  main { padding:0 24px 32px; max-width:1200px; margin:0 auto; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .card .label { color:var(--muted); font-size:.78rem; }
+  .card .value { font-size:1.4rem; font-weight:600; margin-top:4px; }
+  .card .note { color:var(--muted); font-size:.78rem; margin-top:2px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:12px; }
+  .chart { height:280px; position:relative; }
+  h2 { font-size:.95rem; margin:0 0 10px; }
+  .table-wrap { overflow-x:auto; margin-top:12px; max-height:360px; overflow-y:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.85rem; }
+  th, td { text-align:right; padding:6px 10px; border-bottom:1px solid var(--line); }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align:left; }
+  th { position:sticky; top:0; background:var(--card); color:var(--muted); font-weight:500; }
+  #source { font-size:.78rem; color:var(--muted); margin-top:12px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Weather Data Analysis</h1>
+    <div class="sub">Monthly temperature, rainfall and humidity trends (Java + Hadoop MapReduce)</div>
+  </div>
+  <div class="controls">
+    <select id="city" aria-label="City"></select>
+    <button id="reload" title="Re-read Hadoop output">Reload data</button>
+  </div>
+</header>
+<main>
+  <section class="cards" id="cards"></section>
+  <section class="grid">
+    <div class="card"><h2>Average temperature (°C)</h2><div class="chart"><canvas id="tempChart"></canvas></div></div>
+    <div class="card"><h2>Total rainfall (mm)</h2><div class="chart"><canvas id="rainChart"></canvas></div></div>
+    <div class="card"><h2>Average humidity (%)</h2><div class="chart"><canvas id="humChart"></canvas></div></div>
+  </section>
+  <section class="card" style="margin-top:12px">
+    <h2>Monthly statistics</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>City</th><th>Month</th><th>Avg temp (°C)</th><th>Rain (mm)</th><th>Humidity (%)</th><th>Days</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+  <div id="source"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const charts = {};
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(path + " failed: " + res.status);
+  return res.json();
+}
+
+function card(label, value, note) {
+  return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div>` +
+         (note ? `<div class="note">${note}</div>` : "") + `</div>`;
+}
+
+function draw(id, type, label, data, labels, color) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart($(id), {
+    type,
+    data: { labels, datasets: [{ label, data, borderColor: color, backgroundColor: color + "99", tension: 0.3, pointRadius: 2 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+               scales: { x: { ticks: { maxTicksLimit: 12 } } } }
+  });
+}
+
+async function load() {
+  const city = $("city").value;
+  const q = "?city=" + encodeURIComponent(city);
+  const [stats, sum] = await Promise.all([api("/api/stats" + q), api("/api/summary" + q)]);
+
+  $("cards").innerHTML = stats.length ? [
+    card("Average temperature", sum.avgTemp + " °C"),
+    card("Average humidity", sum.avgHumidity + " %"),
+    card("Total rainfall", sum.totalRain + " mm", sum.months + " months analysed"),
+    card("Hottest month", sum.hottestMonth, sum.hottestTemp + " °C"),
+    card("Coldest month", sum.coldestMonth, sum.coldestTemp + " °C"),
+    card("Wettest month", sum.wettestMonth, sum.wettestRain + " mm")
+  ].join("") : card("No data", "—", "Add data/weather.csv or run the Hadoop job");
+
+  const labels = stats.map(s => s.month);
+  draw("tempChart", "line", "Avg temp (°C)", stats.map(s => s.avgTemp), labels, "#e8590c");
+  draw("rainChart", "bar", "Rainfall (mm)", stats.map(s => s.totalRain), labels, "#2563eb");
+  draw("humChart", "line", "Humidity (%)", stats.map(s => s.avgHumidity), labels, "#0f9d8a");
+
+  $("rows").innerHTML = stats.map(s =>
+    `<tr><td>${s.city}</td><td>${s.month}</td><td>${s.avgTemp.toFixed(2)}</td>` +
+    `<td>${s.totalRain.toFixed(2)}</td><td>${s.avgHumidity.toFixed(2)}</td><td>${s.days}</td></tr>`).join("");
+  $("source").textContent = "Data source: " + sum.source;
+}
+
+async function init() {
+  const cities = await api("/api/cities");
+  $("city").innerHTML = cities.map(c => `<option>${c}</option>`).join("");
+  $("city").addEventListener("change", load);
+  $("reload").addEventListener("click", async () => {
+    await api("/api/reload", { method: "POST" });
+    await init();
+  });
+  if (cities.length) await load(); else $("source").textContent = "No data loaded.";
+}
+init().catch(e => { $("source").textContent = e.message; });
+</script>
+</body>
+</html>
